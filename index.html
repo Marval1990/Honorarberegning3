@@ -155,7 +155,6 @@
 
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // 1. Check if Chart.js and the plugin are loaded
       if (typeof Chart === "undefined") {
         console.error("Chart.js is not loaded. Please check the CDN link.");
         return;
@@ -165,10 +164,10 @@
         return;
       }
 
-      // 2. Register the plugin
+      // Register plugin
       Chart.register(ChartDataLabels);
 
-      // 3. Initialize the calculator
+      // Initialize
       initCalculator();
     });
 
@@ -189,13 +188,13 @@
 
       let myChart = null;
 
-      // Helper function to parse input values safely
+      // Helper: parse input safely
       function getNumberValue(elem) {
         const val = parseFloat(elem.value);
         return isNaN(val) ? 0 : val;
       }
 
-      // Helper for currency formatting
+      // Helper: currency formatting
       function formatNOK(value) {
         return new Intl.NumberFormat("nb-NO", {
           style: "currency",
@@ -205,7 +204,7 @@
         }).format(value);
       }
 
-      // Main update function
+      // Main update
       function updateCalculator() {
         try {
           const omsetning = getNumberValue(omsetningInput);
@@ -217,24 +216,20 @@
           const teknikerhonorar = getNumberValue(teknikerInput);
           const salg = getNumberValue(salgInput);
 
-          const annenInntektBeskrivelse = annenInntektBeskrivelseInput.value.trim();
-          const annetFratrekkBeskrivelse = annetFratrekkBeskrivelseInput.value.trim();
-
-          // Calculate sums
+          // Sums
           const sumInnbetalinger = kontant + bankkort + bankinn + annenInntekt;
-          const sumFratrekk = teknikerhonorar + salg;
+          // Include annetFratrekk in sumFratrekk
+          const sumFratrekk = teknikerhonorar + salg + annetFratrekk;
           const grunnlag = sumInnbetalinger - sumFratrekk;
           const differanseInnbetalinger = sumInnbetalinger - omsetning;
 
-          // 40% goes to tannlege, 60% to klinikk
+          // 40% to tannlege, 60% to klinikk
           const omsetningsandel = grunnlag * 0.4;
           const klinikkandel = grunnlag * 0.6;
 
-          // Update text results
           calculationText.innerHTML = `
             <p>Total omsetning: ${formatNOK(omsetning)}</p>
-            <p>Annen inntekt: ${formatNOK(annenInntekt)}
-              ${annenInntektBeskrivelse ? "(" + annenInntektBeskrivelse + ")" : ""}</p>
+            <!-- "Annen inntekt" line removed since it's already included in Sum innbetalinger -->
             <p>Sum innbetalinger: ${formatNOK(sumInnbetalinger)}</p>
             <p>Sum fratrekk: ${formatNOK(sumFratrekk)}</p>
             <div class="sum-line">
@@ -248,11 +243,12 @@
             <p>Differanse mellom innbetalinger og omsetning: ${formatNOK(differanseInnbetalinger)}</p>
           `;
 
-          // Destroy old chart before creating a new one
+          // Destroy old chart before re-creating
           if (myChart) {
             myChart.destroy();
           }
 
+          // Build chart
           myChart = new Chart(chartCanvas.getContext("2d"), {
             type: "bar",
             data: {
@@ -263,7 +259,7 @@
                 "Grunnlag",
                 "Tannlegehonorar (40%)",
                 "Klinikkandel (60%)",
-                "Differanse innb/oms"
+                "Diff. innb/oms"
               ],
               datasets: [
                 {
@@ -336,7 +332,6 @@
         }
       }
 
-      // Add listeners to inputs
       [
         omsetningInput,
         annenInntektInput,
@@ -350,7 +345,7 @@
         inputElem.addEventListener("input", updateCalculator);
       });
 
-      // Initialize with default values
+      // Initialize on page load
       updateCalculator();
     }
   </script>
