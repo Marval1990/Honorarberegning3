@@ -299,17 +299,41 @@
   footer.note {
     margin-top: 6px;
     font-size: 12px;
-    color: #8aa0a5;
+    color: var(--ink-soft);
   }
 
-  /* ---------- Print: only the slip ---------- */
+  .print-only { display: none; }
+
+  /* ---------- Print: slip + chart on one page ---------- */
+  @page { size: A4; margin: 10mm 14mm; }
   @media print {
-    body { background: #fff; }
-    .no-print, .toolbar, .inputs-col, header.page .sub { display: none !important; }
+    body { background: #fff; font-size: 12px; }
+    .no-print, .toolbar, .inputs-col, header.page, footer.note { display: none !important; }
     .layout { display: block; }
+    .wrap { padding: 0; max-width: none; margin: 0; }
     .slip { border: none; }
-    .slip-head { background: none; color: var(--ink); border-bottom: 2px solid var(--ink); border-radius: 0; padding-left: 0; padding-right: 0; }
-    .wrap { padding: 0; max-width: none; }
+    .slip-head {
+      background: none; color: var(--ink);
+      border-bottom: 2px solid var(--ink); border-radius: 0;
+      padding: 0 0 6px;
+    }
+    .slip-head .t { font-size: 18px; }
+    .slip-body { padding: 8px 0 0; }
+    .line { font-size: 12px; padding: 2px 0; }
+    .line.sum { margin-top: 4px; padding-top: 5px; }
+    .line.grunnlag { margin-top: 6px; padding-top: 6px; }
+    .payout { margin-top: 8px; padding: 8px 12px; }
+    .payout .big { font-size: 14px; }
+    .payout .rest { font-size: 11px; }
+    .control { margin-top: 8px; padding: 6px 10px; font-size: 11px; }
+    .print-only {
+      display: block;
+      width: 100%;
+      max-height: 105mm;
+      object-fit: contain;
+      margin-top: 10px;
+      page-break-inside: avoid;
+    }
   }
 </style>
 </head>
@@ -492,6 +516,8 @@
             <span id="kontrollText">Innbetalinger stemmer med omsetningen.</span>
           </div>
 
+          <img id="chartPrint" class="print-only" alt="Oversiktsdiagram" />
+
           <footer class="note">
             Generert <span id="genDato"></span> · Kontrollinjen sammenligner sum innbetalinger med total omsetning.
           </footer>
@@ -665,7 +691,16 @@ document.addEventListener("DOMContentLoaded", function () {
     $(id).addEventListener("change", update);
   });
 
-  $("printBtn").addEventListener("click", () => window.print());
+  function lagChartBilde() {
+    try { $("chartPrint").src = chart.toBase64Image("image/png", 1); }
+    catch (e) { console.error("Kunne ikke lage diagrambilde:", e); }
+  }
+
+  $("printBtn").addEventListener("click", () => {
+    lagChartBilde();
+    window.print();
+  });
+  window.addEventListener("beforeprint", lagChartBilde);
 
   $("resetBtn").addEventListener("click", () => {
     numIds.forEach((id) => { $(id).value = (id === "andel") ? 40 : ""; });
