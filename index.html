@@ -696,8 +696,10 @@ document.addEventListener("DOMContentLoaded", function () {
     catch (e) { console.error("Kunne ikke lage diagrambilde:", e); }
   }
 
-  $("printBtn").addEventListener("click", () => {
+  $("printBtn").addEventListener("click", async () => {
     lagChartBilde();
+    const img = $("chartPrint");
+    try { await img.decode(); } catch (e) { /* skriv ut uansett */ }
     window.print();
   });
   window.addEventListener("beforeprint", lagChartBilde);
