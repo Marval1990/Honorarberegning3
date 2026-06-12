@@ -9,6 +9,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 
+<!-- PDF.js – leser PDF-rapporter lokalt i nettleseren -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -201,6 +204,38 @@
   button.ghost:hover { background: var(--mint); }
   button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
+  /* ---------- PDF upload ---------- */
+  .dropzone {
+    display: block;
+    border: 2px dashed var(--line);
+    border-radius: 8px;
+    padding: 18px 16px;
+    text-align: center;
+    color: var(--ink-soft);
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .dropzone:hover, .dropzone.drag {
+    border-color: var(--petrol);
+    background: var(--mint);
+  }
+  .dropzone strong { color: var(--petrol); }
+  .dropzone input[type="file"] { display: none; }
+  .pdf-status {
+    margin-top: 10px;
+    font-size: 13px;
+    display: none;
+  }
+  .pdf-status .pdf-line {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 3px 0;
+  }
+  .pdf-status .pdf-line.ok { color: var(--ok); }
+  .pdf-status .pdf-line.warn { color: var(--warn); }
+
   /* ---------- Settlement slip ---------- */
   .slip {
     background: var(--card);
@@ -349,6 +384,16 @@
 
     <!-- ================= INPUTS ================= -->
     <div class="inputs-col">
+
+      <div class="card no-print">
+        <h2>Last opp rapporter (PDF)</h2>
+        <label class="dropzone" id="dropzone">
+          <strong>Velg PDF-filer</strong> eller dra dem hit<br />
+          <span style="font-size:12px">Innbetalingsoversikt og Omsetningsskjema – begge kan velges samtidig</span>
+          <input type="file" id="pdfInput" accept=".pdf,application/pdf" multiple />
+        </label>
+        <div class="pdf-status" id="pdfStatus"></div>
+      </div>
 
       <div class="card">
         <h2>Periode og andel</h2>
@@ -576,6 +621,14 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   })();
 
+  function settPeriode(mnd, aar) {
+    if (mnd >= 0 && mnd <= 11) $("periodeMnd").value = mnd;
+    if (aar >= 2000 && aar <= 2100) {
+      aktivtAar = aar;
+      $("periodeAar").textContent = aktivtAar;
+    }
+  }
+
   // ---------- Chart ----------
   const ctx = $("resultatChart").getContext("2d");
   const chart = new Chart(ctx, {
@@ -685,6 +738,192 @@ document.addEventListener("DOMContentLoaded", function () {
     $("genDato").textContent = new Date().toLocaleDateString("nb-NO");
   }
 
+  // ---------- PDF-opplasting ----------
+  // Leser Innbetalingsoversikt og Omsetningsskjema lokalt i nettleseren.
+  // Ingenting lastes opp til en server – alt skjer på din maskin.
+
+  if (typeof pdfjsLib !== "undefined") {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+
+  // Trekker alle tall på formen "12 345,67" ut av en tekstlinje
+  function finnTall(linje) {
+    const treff = linje.match(/\d[\d\s\u00A0]*,\d{2}/g) || [];
+    return treff.map((s) => parseFloat(s.replace(/[\s\u00A0]/g, "").replace(",", ".")));
+  }
+
+  // Leser hele PDF-en og rekonstruerer tekstlinjer (gruppert på y-posisjon)
+  async function lesPdfLinjer(fil) {
+    const buf = await fil.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    const linjer = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const side = await pdf.getPage(p);
+      const innhold = await side.getTextContent();
+      const rader = [];
+      innhold.items.forEach((it) => {
+        if (!it.str || !it.str.trim()) return;
+        const y = it.transform[5];
+        const x = it.transform[4];
+        let rad = rader.find((r) => Math.abs(r.y - y) <= 2.5);
+        if (!rad) { rad = { y: y, deler: [] }; rader.push(rad); }
+        rad.deler.push({ x: x, str: it.str });
+      });
+      rader.sort((a, b) => b.y - a.y);
+      rader.forEach((r) => {
+        r.deler.sort((a, b) => a.x - b.x);
+        linjer.push(r.deler.map((d) => d.str).join(" "));
+      });
+    }
+    return linjer;
+  }
+
+  // Finner periode (måned/år) fra første dato i dokumentet
+  function finnPeriode(linjer) {
+    for (const linje of linjer) {
+      const m = linje.match(/\d{2}\.(\d{2})\.(\d{4})/);
+      if (m) return { mnd: parseInt(m[1], 10) - 1, aar: parseInt(m[2], 10) };
+    }
+    return null;
+  }
+
+  // Innbetalingsoversikt: summeringslinjen er tall-linjen UTEN dato foran.
+  // Kolonnerekkefølge: Kont., Bankkort, Bank inn, Post inn, Tap, Finansinntekt,
+  //                    Tekniker, Hygiene, Salg, Moms 1, Moms 2, Direkte Tr
+  function tolkInnbetalingsoversikt(linjer) {
+    for (const linje of linjer) {
+      if (/^\s*\d{2}\.\d{2}\.\d{4}/.test(linje)) continue; // hopp over daglige rader
+      const tall = finnTall(linje);
+      if (tall.length >= 9) {
+        return {
+          kontant: tall[0],
+          bankkort: tall[1],
+          bankinn: tall[2],
+          salg: tall[8]
+          // Tekniker-kolonnen (tall[6]) ignoreres bevisst –
+          // teknikerhonorar hentes fra Omsetningsskjemaet i stedet.
+        };
+      }
+    }
+    return null;
+  }
+
+  // Omsetningsskjema: "Total:"-linjen → første tall = omsetning, andre = tekniker
+  function tolkOmsetningsskjema(linjer) {
+    for (const linje of linjer) {
+      if (/total/i.test(linje)) {
+        const tall = finnTall(linje);
+        if (tall.length >= 2) return { omsetning: tall[0], tekniker: tall[1] };
+        if (tall.length === 1) return { omsetning: tall[0], tekniker: 0 };
+      }
+    }
+    return null;
+  }
+
+  function visStatus(meldinger) {
+    const boks = $("pdfStatus");
+    boks.innerHTML = "";
+    meldinger.forEach((m) => {
+      const div = document.createElement("div");
+      div.className = "pdf-line " + m.type;
+      const ikon = document.createElement("span");
+      ikon.setAttribute("aria-hidden", "true");
+      ikon.textContent = m.type === "ok" ? "✓" : "⚠";
+      const tekst = document.createElement("span");
+      tekst.textContent = m.tekst;
+      div.appendChild(ikon);
+      div.appendChild(tekst);
+      boks.appendChild(div);
+    });
+    boks.style.display = meldinger.length ? "block" : "none";
+  }
+
+  function settFelt(id, verdi) {
+    $(id).value = Math.round(verdi * 100) / 100;
+  }
+
+  async function behandleFiler(filer) {
+    if (typeof pdfjsLib === "undefined") {
+      visStatus([{ type: "warn", tekst: "PDF-leseren kunne ikke lastes. Sjekk internettforbindelsen og last siden på nytt." }]);
+      return;
+    }
+    const meldinger = [];
+    let periode = null;
+
+    for (const fil of filer) {
+      if (!/\.pdf$/i.test(fil.name) && fil.type !== "application/pdf") {
+        meldinger.push({ type: "warn", tekst: fil.name + ": ikke en PDF-fil – hoppet over." });
+        continue;
+      }
+      try {
+        const linjer = await lesPdfLinjer(fil);
+        const tekst = linjer.join("\n");
+
+        if (/innbetalingsoversikt/i.test(tekst)) {
+          const data = tolkInnbetalingsoversikt(linjer);
+          if (data) {
+            settFelt("kontant", data.kontant);
+            settFelt("bankkort", data.bankkort);
+            settFelt("bankinn", data.bankinn);
+            settFelt("salg", data.salg);
+            meldinger.push({ type: "ok", tekst: "Innbetalingsoversikt lest: kontant, bankkort, bankinnbetalinger og salg er fylt ut." });
+          } else {
+            meldinger.push({ type: "warn", tekst: fil.name + ": fant ikke summeringslinjen. Fyll ut feltene manuelt." });
+          }
+          periode = periode || finnPeriode(linjer);
+
+        } else if (/omsetning\s+fra/i.test(tekst) || /omsetningsskjema/i.test(tekst)) {
+          const data = tolkOmsetningsskjema(linjer);
+          if (data) {
+            settFelt("omsetning", data.omsetning);
+            settFelt("teknikerhonorar", data.tekniker);
+            meldinger.push({ type: "ok", tekst: "Omsetningsskjema lest: total omsetning og tannteknikerhonorar er fylt ut." });
+          } else {
+            meldinger.push({ type: "warn", tekst: fil.name + ": fant ikke Total-linjen. Fyll ut feltene manuelt." });
+          }
+          periode = periode || finnPeriode(linjer);
+
+        } else {
+          meldinger.push({ type: "warn", tekst: fil.name + ": gjenkjente ikke rapporttypen. Forventer Innbetalingsoversikt eller Omsetningsskjema." });
+        }
+      } catch (e) {
+        console.error(e);
+        meldinger.push({ type: "warn", tekst: fil.name + ": kunne ikke leses. Er filen skadet eller passordbeskyttet?" });
+      }
+    }
+
+    if (periode) settPeriode(periode.mnd, periode.aar);
+    visStatus(meldinger);
+    update();
+  }
+
+  const dropzone = $("dropzone");
+  const pdfInput = $("pdfInput");
+
+  pdfInput.addEventListener("change", () => {
+    if (pdfInput.files.length) behandleFiler(Array.from(pdfInput.files));
+    pdfInput.value = ""; // tillat å laste samme fil på nytt
+  });
+
+  ["dragenter", "dragover"].forEach((ev) =>
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dropzone.classList.add("drag");
+    })
+  );
+  ["dragleave", "drop"].forEach((ev) =>
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("drag");
+    })
+  );
+  dropzone.addEventListener("drop", (e) => {
+    if (e.dataTransfer && e.dataTransfer.files.length) {
+      behandleFiler(Array.from(e.dataTransfer.files));
+    }
+  });
+
   // ---------- Events ----------
   numIds.concat(txtIds).forEach((id) => {
     $(id).addEventListener("input", update);
@@ -708,6 +947,7 @@ document.addEventListener("DOMContentLoaded", function () {
     numIds.forEach((id) => { $(id).value = (id === "andel") ? 40 : ""; });
     $("annenInntektBeskrivelse").value = "";
     $("annetFratrekkBeskrivelse").value = "";
+    visStatus([]);
     update();
   });
 
